@@ -46,190 +46,161 @@ contract EHR {
         address labTechnicianAddress;
     }
 
-    mapping(address => User) users;
-    mapping(address => bool) isAdmin;
-    mapping(address => bool) isDoctor;
-    mapping(address => bool) isPatient;
-    mapping(address => bool) isLabTechnician;
-    mapping(address => string) patientRecords;
-    mapping(address => mapping(address => bool)) access;
-    mapping(address => PatientRecordFiles[]) patientRecordFiles;
-    ReportRequest[] reportRequestsArray; 
-    event AccessEvent(address indexed userAddress, address patientAddress, bool flag);
+    mapping(address => User) private users;
+    mapping(address => bool) public isAdmin;
+    mapping(address => bool) public isDoctor;
+    mapping(address => bool) public isPatient;
+    mapping(address => bool) public isLabTechnician;
 
-    modifier checkUserRegister() {
-        require(
-            bytes(users[msg.sender].email).length == 0,
-            "Already registered"
-        );
+    mapping(address => mapping(address => bool)) public access;
+    mapping(address => PatientRecordFiles[]) private patientRecordFiles;
+
+    ReportRequest[] private reportRequestsArray;
+
+    // Events
+    event AccessEvent(address indexed userAddress, address patientAddress, bool flag);
+    event UserLogin(address indexed owner, string email, bool status);
+
+    // -------------------- MODIFIERS --------------------
+
+    modifier notRegistered() {
+        require(bytes(users[msg.sender].email).length == 0, "Already registered");
         _;
     }
 
-    modifier isUserRegistered() {
-        require(
-            bytes(users[msg.sender].email).length != 0,
-            "User not registered"
-        );
+    modifier isRegistered() {
+        require(bytes(users[msg.sender].email).length != 0, "User not registered");
         _;
     }
 
     modifier onlyAdmin() {
-        require(isAdmin[msg.sender], "User doesn't have ADMIN access");
+        require(isAdmin[msg.sender], "Not an admin");
         _;
     }
 
     modifier onlyDoctor() {
-        require(isDoctor[msg.sender], "User doesn't have DOCTOR access");
+        require(isDoctor[msg.sender], "Not a doctor");
         _;
     }
 
     modifier onlyPatient() {
-        require(isPatient[msg.sender], "User doesn't have PATIENT access");
+        require(isPatient[msg.sender], "Not a patient");
         _;
     }
 
     modifier onlyLabTechnician() {
-        require(
-            isLabTechnician[msg.sender],
-            "User doesn't have Lab Technician access"
-        );
+        require(isLabTechnician[msg.sender], "Not a lab technician");
         _;
     }
 
-    event UserLogin(address indexed onwer, string email, bool status);
+    // -------------------- REGISTRATION --------------------
 
-    function registerPatient(
-        string memory _passwordHash,
-        string memory _email
-    ) public checkUserRegister {
+    function registerPatient(string memory _passwordHash, string memory _email) public notRegistered {
         isPatient[msg.sender] = true;
-        register(_passwordHash, _email, Role.PATIENT);
+        _register(_passwordHash, _email, Role.PATIENT);
     }
 
-    function registerAdmin(
-        string memory _passwordHash,
-        string memory _email
-    ) public checkUserRegister {
+    function registerAdmin(string memory _passwordHash, string memory _email) public notRegistered {
         isAdmin[msg.sender] = true;
-        register(_passwordHash, _email, Role.ADMIN);
+        _register(_passwordHash, _email, Role.ADMIN);
     }
 
-    function registerDoctor(
-        string memory _passwordHash,
-        string memory _email
-    ) public checkUserRegister {
+    function registerDoctor(string memory _passwordHash, string memory _email) public notRegistered {
         isDoctor[msg.sender] = true;
-        register(_passwordHash, _email, Role.DOCTOR);
+        _register(_passwordHash, _email, Role.DOCTOR);
     }
 
-    function registerLabTechnician(
-        string memory _passwordHash,
-        string memory _email
-    ) public checkUserRegister {
+    function registerLabTechnician(string memory _passwordHash, string memory _email) public notRegistered {
         isLabTechnician[msg.sender] = true;
-        register(_passwordHash, _email, Role.LAB_TECHNICIAN); 
+        _register(_passwordHash, _email, Role.LAB_TECHNICIAN); 
     }
 
-    function register(
-        string memory _passwordHash,
-        string memory _email,
-        Role role
-    ) private {
+    function _register(string memory _passwordHash, string memory _email, Role role) private {
         users[msg.sender] = User(role, _email, _passwordHash, msg.sender);
     }
 
-    function login(
-        string memory _email,
-        string memory _passwordHash
-    ) public returns (bool) {
+    // -------------------- LOGIN --------------------
+
+    function login(string memory _email, string memory _passwordHash) public isRegistered returns (bool) {
         User memory user = users[msg.sender];
 
-        if (
-            keccak256(abi.encodePacked(user.email)) ==
-            keccak256(abi.encodePacked(_email)) &&
-            keccak256(abi.encodePacked(user.passwordHash)) ==
-            keccak256(abi.encodePacked(_passwordHash))
-        ) {
-            emit UserLogin(user.userWalletAddress, user.email, true);
-            return true;
-        }
+        bool isValid = (
+            keccak256(abi.encodePacked(user.email)) == keccak256(abi.encodePacked(_email)) &&
+            keccak256(abi.encodePacked(user.passwordHash)) == keccak256(abi.encodePacked(_passwordHash))
+        );
 
-        emit UserLogin(user.userWalletAddress, user.email, false);
-        return false;
+        emit UserLogin(user.userWalletAddress, user.email, isValid);
+        return isValid;
     }
 
-    function hasAccess(
-        address _userAddress,
-        address _patientAddress
-    ) public   {
-        bool flag = access[_patientAddress][_userAddress];
-        emit AccessEvent(_userAddress, _patientAddress, flag);
-    }
+    // -------------------- ACCESS CONTROL --------------------
 
-    function grantAccess(
-        address _userAddress,
-        address _patientAddress
-    ) public  {
+    function grantAccess(address _userAddress, address _patientAddress) public onlyPatient {
         access[_patientAddress][_userAddress] = true;
+        emit AccessEvent(_userAddress, _patientAddress, true);
     }
 
-    function removeAccess(
-        address _userAddress,
-        address _patientAddress
-    ) public  {
+    function removeAccess(address _userAddress, address _patientAddress) public onlyPatient {
         access[_patientAddress][_userAddress] = false;
+        emit AccessEvent(_userAddress, _patientAddress, false);
     }
 
-    function requestReport(address _patientAddress, string memory _testName) public {
-        ReportRequest memory request = ReportRequest({
-            patientAddress: _patientAddress,
-            completedAt: 0,
-            createdAt: block.timestamp,
-            testName: _testName,
-            status: ReportStatus.REQUESTED,
-            labTechnicianAddress: address(0),
-            id:requestId
-        });
-
-        reportRequestsArray.push(request);
-        requestId += 1;
+    function hasAccess(address _userAddress, address _patientAddress) public view returns (bool) {
+        return access[_patientAddress][_userAddress];
     }
 
-    function accecptReportRequest(uint _requestId, address _labAddress) public {
+    // -------------------- REPORT MANAGEMENT --------------------
 
-        reportRequestsArray[_requestId].status = ReportStatus.STARTED;
-        reportRequestsArray[_requestId].labTechnicianAddress = _labAddress;
+    function requestReport(address _patientAddress, string memory _testName) public onlyDoctor {
+        reportRequestsArray.push(
+            ReportRequest({
+                patientAddress: _patientAddress,
+                completedAt: 0,
+                createdAt: block.timestamp,
+                testName: _testName,
+                status: ReportStatus.REQUESTED,
+                labTechnicianAddress: address(0),
+                id: requestId
+            })
+        );
+        requestId++;
     }
-    
-    function getAllReportRequest() public view returns(ReportRequest[] memory) {
-        return reportRequestsArray;
+
+    function acceptReportRequest(uint _requestId, address _labAddress) public onlyDoctor {
+        require(_requestId < reportRequestsArray.length, "Invalid request ID");
+
+        ReportRequest storage request = reportRequestsArray[_requestId];
+        require(request.status == ReportStatus.REQUESTED, "Already accepted");
+
+        request.status = ReportStatus.STARTED;
+        request.labTechnicianAddress = _labAddress;
     }
 
-    function uploadReport(
-        uint _requestId,
-        string memory _ipfsHash,
-        address _labAddress
-    ) public {  
+    function uploadReport(uint _requestId, string memory _ipfsHash, address _labAddress) public onlyLabTechnician {
+        require(_requestId < reportRequestsArray.length, "Invalid request ID");
 
-        reportRequestsArray[_requestId].status = ReportStatus.COMPLETED;
-        reportRequestsArray[_requestId].completedAt = block.timestamp;
+        ReportRequest storage request = reportRequestsArray[_requestId];
+        require(request.status == ReportStatus.STARTED, "Report not accepted");
 
-        patientRecordFiles[reportRequestsArray[_requestId].patientAddress].push(
+        request.status = ReportStatus.COMPLETED;
+        request.completedAt = block.timestamp;
+
+        patientRecordFiles[request.patientAddress].push(
             PatientRecordFiles({
                 ipfsHash: _ipfsHash,
-                appliedAt: reportRequestsArray[_requestId].createdAt,
+                appliedAt: request.createdAt,
                 testDoneAt: block.timestamp,
-                testName: reportRequestsArray[_requestId].testName,
+                testName: request.testName,
                 labTechnicianAddress: _labAddress
             })
         );
     }
 
-    function fetchReports(address _patientAddress)
-        public
-        view
-        returns (PatientRecordFiles[] memory)
-    {
+    function fetchReports(address _patientAddress) public view returns (PatientRecordFiles[] memory) {
         return patientRecordFiles[_patientAddress];
+    }
+
+    function getAllReportRequests() public view returns (ReportRequest[] memory) {
+        return reportRequestsArray;
     }
 }
